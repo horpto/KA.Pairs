@@ -115,38 +115,38 @@ xpair (fe:fes) = pair fe : xpair fes
 
 main = do
     fin <- openFile "in.txt" ReadMode
-    k' <- hGetLine fin
-    l' <- hGetLine fin
+    s' <- hGetLine fin
     content <- hGetContents fin
     let
-        k' = "4"
-        l' = "4"
+--content = "1  0  0  0\n1  0  0  0\n0  0  0  1\n0  0  1  1\n1  1  1  1"
+--s' = "5 4"
+          s = words s'
+          k' = head s
+          l' = head (tail s)
+          k = strToInt k'
+          l = strToInt l'
+          a'' = lines content
+          a' = map words a''
+          adj = map (map strToInt) a'
 
-        k = strToInt k'
-        l = strToInt l'
-        a'' = lines content
-        a' = map words a''
-        adj = map (map strToInt) a'
+          es = [[(x, y) | y <- [k+1..k+l]] | x <- [1..k]]
+          les = [(k+l+1, x, 1) | x <- [1..k]] ++
+                (concat $! labelEdges adj es) ++ 
+                [ (y, k+l+2, 1) | y <- [k+1..k+l]] :: [LEdge Int]
+          vs = labelVertexes [1..k+l+2] ([1..k] ++ [1..l] ++ [k+l+1, k+l+2])
+          g = mkGraph vs les :: Gr Int Int
+          f = maxFlowgraph g (k+l+1) (k+l+2)
+          me'' = labEdges $! efilter (\(x, y, _) -> x /= k+l+1 && y /= k+l+2) f
 
-        es = [[(x, y) | x <- [1..k]] | y <- [k+1..k+l]]
-        les = [(k+l+1, x, 1) | x <- [1..k]] ++
-              (concat $! labelEdges adj es) ++ 
-              [ (y, k+l+2, 1) | y <- [k+1..k+l]] :: [LEdge Int]
-        vs = labelVertexes [1..k+l+2] ([1..k] ++ [1..l] ++ [k+l+1, k+l+2])
-        g = mkGraph vs les :: Gr Int Int
-        f = maxFlowgraph g 9 10
-        me'' = labEdges $! efilter (\(x, y, _) -> x /= k+l+1 && y /= k+l+2) f
-
-        me' = map (map (\(x, y, (f, _)) -> (y-k, f))) [[f | f <- me'', x == (\(s, _, _) -> s) f] | x<-[1..k]]
-        -- $! filter (\(x, _, _) -> x <= k) me''
-        me  = map maximump me'
-            where
-                maximump [] = (0, 0)
-                maximump es = foldl1 maxp es
-                maxp (a, b) (c, d)
-                    | b <= d    = (c, d)
-                    | otherwise = (a, b)
-        x = xpair me
+          me' = map (map (\(x, y, (f, _)) -> (y-k, f))) [[f | f <- me'', x == (\(s, _, _) -> s) f] | x<-[1..k]]
+          me  = map maximump me'
+              where
+                  maximump [] = (0, 0)
+                  maximump es = foldl1 maxp es
+                  maxp (a, b) (c, d)
+                      | b <= d    = (c, d)
+                      | otherwise = (a, b)
+          x = xpair me
 
     fout <- openFile "out.txt" WriteMode
     hPutStr fout (showLst x)
