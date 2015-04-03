@@ -1,0 +1,4 @@
+*.hi
+*.o
+out.txt
+pairs.exe

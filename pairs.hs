@@ -10,56 +10,16 @@ import Data.Graph.Inductive.Monad
 import Data.Graph.Inductive.Monad.IOArray
 import Data.Graph.Inductive.Query.BFS
 
-intToDigit :: Int -> Char
-intToDigit i
-    | i >= 0  && i <=  9   =  toEnum (fromEnum '0' + i)
-    | i >= 10 && i <= 15   =  toEnum (fromEnum 'a' + i - 10)
-    | otherwise            =  error "Char.intToDigit: not a digit"
-
-intToStr :: Int -> String
-intToStr 0 = "0"
-intToStr i = map intToDigit (fi i)
-    where
-        --is = [ x | x <- (fi i) ]
-        fi 0 = []
-        fi x = (x `mod` 10) : (fi $ x `div` 10)
-
-isDigit c =  c >= '0'   &&  c <= '9'
-
-digitToInt :: Char -> Int
-digitToInt c
-    | isDigit c            =  fromEnum c - fromEnum '0'
-    | c >= 'a' && c <= 'f' =  fromEnum c - fromEnum 'a' + 10
-    | c >= 'A' && c <= 'F' =  fromEnum c - fromEnum 'A' + 10
-    | otherwise            =  error "Char.digitToInt: not a digit"
-
-strToInt :: String -> Int
-strToInt s =  foldl f 0 $ map digitToInt s
-    where
-        f z x = 10*z + x
-
--- Есть список весов (матрица смежности) и список рёбер
--- Присвоить каждому ребру вес
-labelEdges [] [] = []
-labelEdges (ads:adss) (es:ess) = (f ads es) : labelEdges adss ess
-    where
-       f [] [] = []
-       f (w:ws) ((x,y):xs) = (x, y, w) : f ws xs
-
--- Проставить метки на вершины
--- (во-первых, это требование типа данных,
--- во-вторых, по ним потом легко будет выводить данные)
-labelVertexes = zip
-
 -- =========================
 -- MaxFlow
 -- =========================
 
+filterFB c p x r = if p x r then x `c` r else r
+
 -- получить обратные рёбра нулевой пропускной способности
---getRevEdges :: (Num b,Ord b) => [(Node,Node)] -> [(Node,Node,b)]
-getRevEdges [] = []
-getRevEdges ((u,v):es) | notElem (v,u) es = (v,u,0):getRevEdges es
-                       | otherwise        = getRevEdges (delete (v,u) es)
+--getRevEdges :: (Num b,Ord b) => [(Node,Node)] -> [(Node,Node,(b,b,b))]
+getRevEdges lst = foldl func [] lst where 
+    func edg (u, v) = filterFB (:) elem (v, u, (0,0,0)) edg
 
 -- Вставить в граф обратные рёбра и изменить метки
 -- всех рёбер с (пропускная способность) на (пр. сп-ть, текущий поток (0 по умолчанию), остаток)
@@ -67,89 +27,92 @@ getRevEdges ((u,v):es) | notElem (v,u) es = (v,u,0):getRevEdges es
 --   i       (i,0,i)
 -- a---->b  a------->b
 --augmentGraph :: (DynGraph gr,Num b,Ord b) => gr a b -> gr a (b,b,b)
-augmentGraph g = emap (\i->(i,0,i)) (insEdges (getRevEdges (edges g)) g)
-                                                
---updAdjList::(Num b,Ord b) => [((b,b,b),Node)]->Node->b->Bool->[((b,b,b),Node)]
-updAdjList s v cf fwd | fwd == True = ((x,y+cf,z-cf),w):rs
-                      | otherwise   = ((x,y-cf,z+cf),w):rs
-                        where ((x,y,z),w) = head (filter (\(_,w')->v==w') s)
-                              rs          = filter (\(_,w')->v/=w') s
+augmentGraph g = insEdges (getRevEdges $ edges g') g'
+    where g' = emap (\i->(i,0,i)) g
 
---updateFlow :: (DynGraph gr,Num b,Ord b) => Path -> b -> gr a (b,b,b) -> gr a (b,b,b)
-updateFlow []      _ g = g
-updateFlow [_]       _ g = g
-updateFlow (u:v:vs) cf g = case match u g of
-                             (Nothing,g')        -> g'
-                             (Just (p,u',l,s),g') -> (p',u',l,s') & g2
-                                where g2 = updateFlow (v:vs) cf g'
-                                      s' = updAdjList s v cf True
-                                      p' = updAdjList p v cf False
+foldPath _ [] g =  g
+foldPath _ [_] g =  g
+foldPath f (u:v:ls) g = foldPath f (v:ls) (f u v g)
+
+--updateFlow :: (DynGraph gr,Num b,Ord b) => LPath (b,b,b) -> b -> gr a (b,b,b) -> gr a (b,b,b)
+updateFlow path g = foldPath updateNode path g
+    where cf = minimum $ map (z_coord.snd) $ tail path
+          updateNode (u,(c, p, inv_p)) (v, _) g = insEdge (u, v, (c, p+cf, inv_p-cf)) $ delEdge (u,v) g
 
 --mfmg :: (DynGraph gr,Num b,Ord b) => gr a (b,b,b) -> Node -> Node -> gr a (b,b,b)
-mfmg g s t | augPath == [] = g
-           | otherwise     = mfmg (updateFlow augPath minC g) s t
-             where minC        = minimum (map ((\(_,_,z)->z).snd)(tail augLPath))
-                   augPath     = map fst augLPath
-                   LP augLPath = lesp s t gf
-                   gf          = elfilter (\(_,_,z)->z/=0) g
+mfmg g s t | augLPath == [] = g
+           | otherwise      = mfmg (updateFlow augLPath g) s t
+             where LP augLPath = lesp s t $ elfilter ((/=0).z_coord) g
 
---mf :: (DynGraph gr,Num b,Ord b) => gr a b -> Node -> Node -> gr a (b,b,b)
-mf g s t = mfmg (augmentGraph g) s t
 
 --maxFlowgraph :: (DynGraph gr,Num b,Ord b) => gr a b -> Node -> Node -> gr a (b,b)
-maxFlowgraph g s t = emap (\(u,v,_)->(v,u)) g2
-                           where g2 = elfilter (\(x,_,_)->x/=0) g1
-                                 g1 = mf g s t
-                                  
+maxFlowgraph g s t = emap (\(u,v,_)->(v,u)) $ elfilter ((/=0).x_coord) g'
+                           where g' = mfmg (augmentGraph g) s t
+
+-- =========================
+-- readGraph
+-- =========================
+
+header = "5 4"
+content = "1  0  0  0\n1  0  0  0\n0  0  0  1\n0  0  1  1\n1  1  1  1"
+
+-- readGraph :: Gr Int Int
+readGraph header body = (mkGraph vs edges, k, l) where
+    [k, l] = map read $ words header
+    adj = map read $ words body
+    es = [(x, y) | x <- [1..k], y <- [k+1..k+l]]
+    edges = [(0, x, 1) | x <- [1..k]] ++
+            (labelEdges es adj) ++
+            [(y, k+l+1, 1) | y <- [k+1..k+l]] :: [LEdge Int]
+    vs = labelVertexes [0..k+l+1] $ [0..k] ++ [1..l] ++ [k+l+1]
+
+-- Есть список весов (матрица смежности) и список рёбер
+-- Присвоить каждому ребру вес
+labelEdges x y = filter ((/=0).z_coord) $ zipWith (\(x, y) w -> (x, y, w)) x y
+
+-- Проставить метки на вершины
+-- (во-первых, это требование типа данных,
+-- во-вторых, по ним потом легко будет выводить данные)
+labelVertexes = zip
+                                 
+
 -- =========================
 -- main
 -- =========================
 
-showLst xs = concat $ map (\x -> show x ++ " ") xs
+-- first, second, and third elements of 3-tuple
+x_coord (x, _, _) = x
+y_coord (_, y, _) = y
+z_coord (_, _, z) = z
 
-xpair []       = []
-xpair (fe:fes) = pair fe : xpair fes
-    where
-        pair (_, 0) = 0
-        pair (y, _) = y
+xpair (_, 0) = 0
+xpair (y, _) = y
+
+maximump [] = (0, 0)
+maximump es = foldl1 maxp es
+maxp fp@(_, b) sp@(_, d) = if b <= d then sp else fp
 
 main = do
     fin <- openFile "in.txt" ReadMode
-    s' <- hGetLine fin
-    content <- hGetContents fin
+    header <- hGetLine fin
+    adj <- hGetContents fin
+    
     let
---content = "1  0  0  0\n1  0  0  0\n0  0  0  1\n0  0  1  1\n1  1  1  1"
---s' = "5 4"
-          s = words s'
-          k' = head s
-          l' = head (tail s)
-          k = strToInt k'
-          l = strToInt l'
-          a'' = lines content
-          a' = map words a''
-          adj = map (map strToInt) a'
-
-          es = [[(x, y) | y <- [k+1..k+l]] | x <- [1..k]]
-          les = [(k+l+1, x, 1) | x <- [1..k]] ++
-                (concat $! labelEdges adj es) ++ 
-                [ (y, k+l+2, 1) | y <- [k+1..k+l]] :: [LEdge Int]
-          vs = labelVertexes [1..k+l+2] ([1..k] ++ [1..l] ++ [k+l+1, k+l+2])
-          g = mkGraph vs les :: Gr Int Int
-          f = maxFlowgraph g (k+l+1) (k+l+2)
-          me'' = labEdges $! efilter (\(x, y, _) -> x /= k+l+1 && y /= k+l+2) f
-
-          me' = map (map (\(x, y, (f, _)) -> (y-k, f))) [[f | f <- me'', x == (\(s, _, _) -> s) f] | x<-[1..k]]
-          me  = map maximump me'
-              where
-                  maximump [] = (0, 0)
-                  maximump es = foldl1 maxp es
-                  maxp (a, b) (c, d)
-                      | b <= d    = (c, d)
-                      | otherwise = (a, b)
-          x = xpair me
+      (graph, k, l) = readGraph header adj :: (Gr Int Int, Int, Int)
+      f = maxFlowgraph graph 0 (k+l+1)
+      me'' = labEdges $! efilter (\(x, y, _) -> x /= 0 && y /= k+l+1) f
+      me' = [map (\(_, y, (f, _)) -> (y-k, f)) $ filter ((== x).x_coord) me'' | x <- [1..k]]
+      me  = map (xpair . maximump) me'
+    putStr $ prettify graph
 
     fout <- openFile "out.txt" WriteMode
-    hPutStr fout (showLst x)
-
+    hPutStr fout (unwords $ map show $ take (k-1) me)
     hClose fin
     hClose fout
+
+prettify :: (DynGraph gr, Show a, Show b) => gr a b -> String
+prettify g = ufold showsContext id g ""
+  where
+    showsContext (_,n,l,s) sg = shows n . (':':) . shows l
+                                . showString "->" . shows s
+                                . ('\n':) . sg
